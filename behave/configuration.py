@@ -1,26 +1,28 @@
 # -*- coding: utf-8 -*-
 
 from __future__ import print_function
+
 import argparse
 import logging
 import os
 import re
-import sys
 import shlex
-import six
+import sys
 from importlib import import_module
+
+import six
 from six.moves import configparser
 
+from behave._types import Unknown
+from behave.formatter import _registry as _format_registry
+from behave.formatter.base import StreamOpener
 from behave.model import ScenarioOutline
 from behave.model_core import FileLocation
 from behave.reporter.junit import JUnitReporter
 from behave.reporter.summary import SummaryReporter
 from behave.tag_expression import make_tag_expression
-from behave.formatter.base import StreamOpener
-from behave.formatter import _registry as _format_registry
-from behave.userdata import UserData, parse_user_define
-from behave._types import Unknown
 from behave.textutil import select_best_encoding, to_texts
+from behave.userdata import UserData, parse_user_define
 
 # -- PYTHON 2/3 COMPATIBILITY:
 # SINCE Python 3.2: ConfigParser = SafeConfigParser
@@ -673,10 +675,11 @@ class Configuration(object):
         # -- FINALLY: Setup Reporters and Formatters
         # NOTE: Reporters and Formatters can now use userdata information.
         if self.junit:
+            # NOTE: Disabled, as we store all logs in the file
             # Buffer the output (it will be put into Junit report)
-            self.stdout_capture = True
+            # self.stdout_capture = True
             self.stderr_capture = True
-            self.log_capture = True
+            # self.log_capture = True
             self.reporters.append(JUnitReporter(self))
         if self.summary:
             self.reporters.append(SummaryReporter(self))
