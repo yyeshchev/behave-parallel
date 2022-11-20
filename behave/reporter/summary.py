@@ -10,6 +10,11 @@ from behave.model import Rule, ScenarioOutline  # MAYBE: Scenario
 from behave.model_core import Status
 from behave.reporter.base import Reporter
 from behave.formatter.base import StreamOpener
+try:
+    # requires py>=3.3 or 3.5 for all platforms
+    from time import monotonic
+except ImportError:
+    from time import time as monotonic
 
 
 # ---------------------------------------------------------------------------
@@ -139,7 +144,7 @@ class SummaryReporter(Reporter):
         self.scenario_summary = summary_zero_data.copy()
         self.step_summary = {Status.undefined.name: 0}
         self.step_summary.update(summary_zero_data)
-        self.duration = 0.0
+        self.start = monotonic()
         self.run_starttime = 0
         self.run_endtime = 0
         self.failed_scenarios = []
@@ -190,7 +195,8 @@ class SummaryReporter(Reporter):
 
         # -- DURATION:
         if with_duration:
-            timings = (int(self.duration / 60.0), self.duration % 60)
+            duration = monotonic() - self.start
+            timings = (int(duration / 60.0), duration % 60)
             stream.write('Took %dm%02.3fs\n' % timings)
 
     # -- REPORTER-API:
@@ -223,7 +229,6 @@ class SummaryReporter(Reporter):
                 self.process_scenario(run_item)
 
     def process_feature(self, feature):
-        self.duration += feature.duration
         self.feature_summary[feature.status.name] += 1
         self.process_run_items_for(feature)
 
