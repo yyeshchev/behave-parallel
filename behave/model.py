@@ -181,6 +181,33 @@ class ScenarioContainer(TagAndStatusStatement, Replayable):
         for run_item in self.run_items:
             run_item.reset()
 
+    def send_status(self):
+        ret = super(Feature, self).send_status()
+        ret['hook_failed'] = self.hook_failed
+        ret['scenarios'] = {}
+        for scenario in self.scenarios:
+            ret['scenarios'][hash(scenario)] = scenario.send_status()
+        return ret
+
+    def recv_status(self, value):
+        super(Feature, self).recv_status(value)
+        if 'hook_failed' in value:
+            self.hook_failed = value['hook_failed']
+        if 'scenarios' in value:
+            for scenario in self.scenarios:
+                sval = value['scenarios'].get(hash(scenario))
+                if sval is not None:
+                    scenario.recv_status(sval)
+
+    @property
+    def is_finished(self):
+        if self._cached_status in self.final_status:
+            return True
+        for s in self.walk_scenarios():
+            if not s.is_finished:
+                return False
+        return True
+
     def _setup_context_for_run(self, context):
         """Setup/Init runner context for run."""
         # -- OVERRIDDEN: By derived classes.
@@ -235,10 +262,14 @@ class ScenarioContainer(TagAndStatusStatement, Replayable):
     def duration(self):
         # -- NEW: Background is executed N times, now part of scenarios.
         # TODO: Use self.run_endtime - self.run_starttime
-        feature_duration = 0.0
+        if self.background:
+            feature_duration = self.background.duration or 0.0
+        else:
+            feature_duration = 0.0
         # -- OLD IMPLEMENTATION:
         for scenario in self.scenarios:
             feature_duration += scenario.duration
+
         # -- NEW IMPLEMENTATION:
         # feature_duration = self.run_endtime - self.run_starttime
         return feature_duration
@@ -941,6 +972,9 @@ class Scenario(TagAndStatusStatement, Replayable):
         self._row = None
         self.was_dry_run = False
 
+    def __hash__(self):
+        return hash((self.filename, self.line, self.keyword, self.name))
+
     def reset(self):
         """Reset the internal data to reintroduce new-born state just after the
         ctor was called.
@@ -951,6 +985,29 @@ class Scenario(TagAndStatusStatement, Replayable):
         self.was_dry_run = False
         for step in self.all_steps:
             step.reset()
+
+    def send_status(self):
+        ret = super(Scenario, self).send_status()
+        ret['hook_failed'] = self.hook_failed
+        ret['was_dry_run'] = self.was_dry_run
+
+        ret['steps'] = {}
+        for step in self.all_steps:
+            ret['steps'][hash(step)] = step.send_status()
+        return ret
+
+    def recv_status(self, value):
+        super(Scenario, self).recv_status(value)
+        if 'hook_failed' in value:
+            self.hook_failed = value['hook_failed']
+        if 'was_dry_run' in value:
+            self.was_dry_run = value['was_dry_run']
+        if 'steps' in value:
+            steps_v = value['steps']
+            for step in self.all_steps:
+                sval = steps_v.get(hash(step), None)
+                if sval is not None:
+                    step.recv_status(sval)
 
     @property
     def use_background(self):
@@ -1011,6 +1068,15 @@ class Scenario(TagAndStatusStatement, Replayable):
 
     def __iter__(self):
         return self.iter_steps()
+
+    @property
+    def is_finished(self):
+        if self._cached_status in self.final_status:
+            return True
+        for s in self.all_steps:
+            if s.status not in self.final_status:
+                return False
+        return True
 
     def compute_status(self):
         """Compute the status of the scenario from its steps
@@ -1106,6 +1172,15 @@ class Scenario(TagAndStatusStatement, Replayable):
             self.set_status(Status.skipped)
         assert self.status in self.final_status #< skipped, failed or passed
 
+    def force_pass(self, reason=None):
+        """Mark scenario as passed and skip any remaining steps
+        """
+        assert self._cached_status == Status.untested, self._cached_status
+        assert not self.should_skip
+        self.skip_reason = reason
+        self._cached_status = Status.passed
+        self.should_skip = 'pass'
+
     def run(self, runner):
         # pylint: disable=too-many-branches, too-many-statements
         self.clear_status()
@@ -1192,7 +1267,8 @@ class Scenario(TagAndStatusStatement, Replayable):
                     #   * Step skipped remaining scenario.
                     step.status = Status.skipped
 
-        self.clear_status()  # -- ENFORCE: compute_status() after run.
+        if self.should_skip != 'pass':
+            self.clear_status()  # -- ENFORCE: compute_status() after run.
         if not run_scenario and not self.steps:
             # -- SPECIAL CASE: Scenario without steps.
             self.set_status(Status.skipped)
@@ -1603,6 +1679,31 @@ class ScenarioOutline(Scenario):
         runner.context._set_root_attribute("active_outline", None)
         return failed_count > 0
 
+    def send_status(self):
+        ret = super(ScenarioOutline, self).send_status()
+        ret['sub_scenarios'] = {}
+        for scenario in self._scenarios:
+            ret['sub_scenarios'][hash(scenario)] = scenario.send_status()
+        return ret
+
+    def recv_status(self, value):
+        if 'sub_scenarios' in value:
+            sub_scens = value['sub_scenarios']
+            for scenario in self.scenarios:
+                sval = sub_scens.get(hash(scenario))
+                if sval is not None:
+                    scenario.recv_status(sval)
+
+    @property
+    def is_finished(self):
+        if self._cached_status in self.final_status:
+            return True
+        for s in self._scenarios:
+            if not s.is_finished:
+                return False
+        return True
+
+
 class Examples(TagStatement, Replayable):
     """A table parsed from a `scenario outline`_ in a *feature file*.
 
@@ -1639,6 +1740,9 @@ class Examples(TagStatement, Replayable):
         super(Examples, self).__init__(filename, line, keyword, name, tags)
         self.table = table
         self.index = None
+
+    def __hash__(self):
+        return hash((self.filename, self.line, self.step_type, self.name))
 
 
 class Step(BasicStatement, Replayable):
@@ -1741,6 +1845,22 @@ class Step(BasicStatement, Replayable):
         self.duration = 0
         # -- POSTCONDITION: assert self.status == Status.untested
 
+    def send_status(self):
+        ret = super(Step, self).send_status()
+        ret['status'] = self.status
+        ret['hook_failed'] = self.hook_failed
+        ret['duration'] = self.duration
+        return ret
+
+    def recv_status(self, value):
+        super(Step, self).recv_status(value)
+        if 'status' in value:
+            self.status = value['status']
+        if 'hook_failed' in value:
+            self.hook_failed = value['hook_failed']
+        if 'duration' in value:
+            self.duration = value['duration']
+
     def __repr__(self):
         return '<%s "%s">' % (self.step_type, self.name)
 
@@ -1813,6 +1933,11 @@ class Step(BasicStatement, Replayable):
                 if self.status == Status.untested:
                     # -- NOTE: Executed step may have skipped scenario and itself.
                     self.status = Status.passed
+                elif self.status == Status.skipped:
+                    # scenario has just skipped (after running this step)
+                    # then this step must keep reason for skipping
+                    self.error_message = runner.context.scenario.skip_reason \
+                                         or self.error_message
             except KeyboardInterrupt as e:
                 runner.abort(reason="KeyboardInterrupt")
                 error = u"ABORTED: By user (KeyboardInterrupt)."
@@ -1841,7 +1966,7 @@ class Step(BasicStatement, Replayable):
             runner.stop_capture()
 
         # flesh out the failure with details
-        store_captured_always = False   # PREPARED
+        store_captured_always = True   # PREPARED
         store_captured = self.status == Status.failed or store_captured_always
         if self.status == Status.failed:
             assert isinstance(error, six.text_type)
@@ -2130,6 +2255,9 @@ class Tag(six.text_type):
         o.line = line
         return o
 
+    def __getnewargs__(self):
+        return (six.text_type(self), self.line)
+
     @classmethod
     def make_name(cls, text, unescape=False, allowed_chars=None):
         """Translate text into a "valid tag" without whitespace, etc.
@@ -2197,6 +2325,9 @@ class Text(six.text_type):
         o.content_type = content_type
         o.line = line
         return o
+
+    def __getnewargs__(self):
+        return (six.text_type(self), self.content_type, self.line)
 
     def line_range(self):
         line_count = len(self.splitlines())

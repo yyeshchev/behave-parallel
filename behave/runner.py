@@ -417,7 +417,7 @@ class Context(object):
                     if step.error_message:
                         message += "\nSubstep info: %s\n" % step.error_message
                         message += u"Traceback (of failed substep):\n"
-                        message += u"".join(traceback.format_tb(step.exc_traceback))
+                        message += u"".join(step.exc_traceback)
                     # message += u"\nTraceback (of context.execute_steps()):"
                     assert False, message
 
@@ -592,6 +592,13 @@ class ModelRunner(object):
 
     # @property
     def _get_aborted(self):
+        """
+        Indicates that a test run was aborted by the user
+        (:exc:`KeyboardInterrupt` exception).
+        Stored in :attr:`Context.aborted` attribute (as root attribute).
+        :return: Current aborted state, initially false.
+        :rtype: bool
+        """
         value = False
         if self.context:
             value = self.context.aborted
@@ -599,6 +606,10 @@ class ModelRunner(object):
 
     # @aborted.setter
     def _set_aborted(self, value):
+        """
+        Set the aborted value.
+        :param value: New aborted value (as bool).
+        """
         # pylint: disable=protected-access
         assert self.context, "REQUIRE: context, but context=%r" % self.context
         self.context._set_root_attribute("aborted", bool(value))

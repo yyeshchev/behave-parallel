@@ -348,7 +348,10 @@ class JUnitReporter(Reporter):
             if step.text:
                 text += ModelDescriptor.describe_docstring(step.text, prefix)
             elif step.table:
-                text += ModelDescriptor.describe_table(step.table, prefix)
+                try:
+                    text += ModelDescriptor.describe_table(step.table, prefix)
+                except Exception:
+                    pass
         return text
 
     @classmethod
@@ -447,8 +450,7 @@ class JUnitReporter(Reporter):
                     failure_type = scenario.exception.__class__.__name__
                 failure.set(u'type', failure_type)
                 failure.set(u'message', scenario.error_message.strip() or "")
-                traceback_lines = traceback.format_tb(scenario.exc_traceback)
-                traceback_lines.insert(0, u"Traceback:\n")
+                traceback_lines = [u"Traceback:\n"] + scenario.exc_traceback
                 text = _text(u"".join(traceback_lines))
             failure.append(CDATA(text))
             case.append(failure)
@@ -482,10 +484,16 @@ class JUnitReporter(Reporter):
         case.append(stdout)
 
         # Create stderr section for each test case
+        stderr = ElementTree.Element(u"system-err")
+        text = u''
         if scenario.captured.stderr:
-            stderr = ElementTree.Element(u"system-err")
-            output = _text(scenario.captured.stderr)
-            text = u"\nCaptured stderr:\n%s\n" % output
+            text += u"\nCaptured stderr:\n" \
+                    + _text(scenario.captured.stderr) + u'\n'
+
+        if scenario.captured.log_output:
+            text += u"\nCaptured logs:\n" \
+                    + _text(scenario.captured.log_output) + u'\n'
+        if text:
             stderr.append(CDATA(text))
             case.append(stderr)
 
