@@ -219,16 +219,16 @@ def main(args=None):
     # override runner class if parallel option was provided
     if getattr(config, 'proc_count'):
         try:
-            from behave.runner_mp import MultiProcRunner_Feature, MultiProcRunner_Scenario
+            from behave.runner_mp import FeatureParallelRunner, ScenarioParallelRunner
             pelem = getattr(config, 'parallel_element', False)
             if not pelem:
                 print("INFO: Without giving --parallel-element, defaulting to 'scenario'...")
                 pelem = 'scenario'
 
             if pelem == 'scenario':
-                config.runner_class = MultiProcRunner_Scenario
+                config.runner_class = ScenarioParallelRunner
             elif pelem == 'feature':
-                config.runner_class = MultiProcRunner_Feature
+                config.runner_class = FeatureParallelRunner
             else:
                 print("ERROR: When using --processes, --parallel-element"
                     " option must be set to 'feature' or 'scenario'. You gave "

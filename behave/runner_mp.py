@@ -18,14 +18,14 @@ else:
     import queue
 
 
-class MultiProcRunner(Runner):
-    """Master multiprocessing runner: scans jobs and distributes to slaves
+class MasterParallelRunner(Runner):
+    """Master parallel runner: scans jobs and distributes to slaves
         This runner should not do any "processing" tasks, apart from scanning
         the feature files and their scenarios. It then spawns processing nodes
         and lets them consume the queue of tasks scheduled.
     """
     def __init__(self, config):
-        super(MultiProcRunner, self).__init__(config)
+        super(MasterParallelRunner, self).__init__(config)
         self.jobs_map = {}
         self.jobsq = multiprocessing.JoinableQueue()
         self.resultsq = multiprocessing.Queue()
@@ -54,8 +54,19 @@ class MultiProcRunner(Runner):
         old_reporters = self.config.reporters
         self.config.reporters = []
 
+        # TODO: - add here before_all() hook and needed setup
+        # TODO: Debugging
+        if getattr(self, "context"):
+            print("MasterParallelRunner has attr 'context:", self.context.__dict__)
+        else:
+            try:
+                print("Trying print MasterParallelRunner self.context: ", self.context)
+                print(self.context.__dict__)
+            except BaseException as e:
+                print("Got Exception: ", e)
+
         for i in range(proc_count):
-            client = MultiProcClientRunner(self, i)
+            client = ProcessClientExecutor(self, i)
             p = multiprocessing.Process(target=client.run)
             procs.append(p)
             p.start()
@@ -171,7 +182,7 @@ class MultiProcRunner(Runner):
             reporter.feature(feature)
 
 
-class MultiProcRunner_Feature(MultiProcRunner):
+class FeatureParallelRunner(MasterParallelRunner):
     def scan_features(self):
         for feature in self.features:
             self.jobs_map[id(feature)] = feature
@@ -186,7 +197,7 @@ class MultiProcRunner_Feature(MultiProcRunner):
         return len(self.jobs_map), 0
 
 
-class MultiProcRunner_Scenario(MultiProcRunner):
+class ScenarioParallelRunner(MasterParallelRunner):
     def scan_features(self):
         nfeat = nscens = 0
         def put(sth):
@@ -219,12 +230,12 @@ class MultiProcRunner_Scenario(MultiProcRunner):
         return nfeat, nscens
 
 
-class MultiProcClientRunner(Runner):
+class ProcessClientExecutor(Runner):
     """Multiprocessing Client runner: picks "jobs" from parent queue
         Each client is tagged with a `num` to appear in outputs etc.
     """
     def __init__(self, parent, num):
-        super(MultiProcClientRunner, self).__init__(parent.config)
+        super(ProcessClientExecutor, self).__init__(parent.config)
         self.num = num
         self.jobs_map = parent.jobs_map
         self.jobsq = parent.jobsq
@@ -278,6 +289,9 @@ class MultiProcClientRunner(Runner):
         self.load_hooks()
         self.load_step_definitions()
         assert not self.aborted
+
+        # TODO: Debugging
+        print("Context from ProcessExecutor: ", self.context.__dict__)
 
         failed = self.run_model(features=self.iter_queue())
         if failed:
