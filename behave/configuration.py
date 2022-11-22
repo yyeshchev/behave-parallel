@@ -785,8 +785,6 @@ class Configuration(object):
             fileConfig(configfile)
         else:
             # pylint: disable=no-member
-
-            # TODO: Split log files into the processesses when attr proc_count is set
             format_ = kwargs.pop("format", self.logging_format)
             datefmt = kwargs.pop("datefmt", self.logging_datefmt)
             logging.basicConfig(format=format_, datefmt=datefmt, **kwargs)

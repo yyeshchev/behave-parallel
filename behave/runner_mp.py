@@ -1,6 +1,8 @@
 # -*- coding: UTF-8 -*-
 """
 This module provides multiprocessing Runner class.
+
+Core functionality was taken from: https://github.com/xrg/behave-parallel/tree/eparallel
 """
 
 import six
@@ -9,7 +11,7 @@ import multiprocessing
 from behave.formatter._registry import make_formatters
 from behave.runner import Runner, Context
 from behave.model import Feature, Scenario, ScenarioOutline, NoMatch
-from behave.runner_util import parse_features, load_step_modules
+from behave.runner_util import parse_features
 from behave.step_registry import registry as the_step_registry
 
 if six.PY2:
@@ -54,20 +56,18 @@ class MasterParallelRunner(Runner):
         old_reporters = self.config.reporters
         self.config.reporters = []
 
-        # TODO: - add here before_all() hook and needed setup
-        # TODO: Debugging
-        if getattr(self, "context"):
-            print("MasterParallelRunner has attr 'context:", self.context.__dict__)
-        else:
-            try:
-                print("Trying print MasterParallelRunner self.context: ", self.context)
-                print(self.context.__dict__)
-            except BaseException as e:
-                print("Got Exception: ", e)
+        # init default context for Master process to execute before/after_all() hooks
+        self.context = Context(self)
+        self.setup_capture()
+        self.run_hook("before_all", self.context)
 
+        # run each test as a separate Process
         for i in range(proc_count):
             client = ProcessClientExecutor(self, i)
-            p = multiprocessing.Process(target=client.run)
+            p = multiprocessing.Process(
+                target=client.run_executor,
+                args=[self.context]
+                )
             procs.append(p)
             p.start()
             del p
@@ -83,8 +83,9 @@ class MasterParallelRunner(Runner):
             if not any([p.is_alive() for p in procs]):
                 break
 
+        # wait for all jobs to be processed
         if any([p.is_alive() for p in procs]):
-            self.jobsq.join()   # wait for all jobs to be processed
+            self.jobsq.join()
             print("INFO: all jobs have been processed")
 
             while self.consume_results(timeout=0.1):
@@ -95,6 +96,8 @@ class MasterParallelRunner(Runner):
             [p.join() for p in procs]
 
         print("INFO: all sub-processes have returned")
+
+        self.run_hook("after_all", self.context)
 
         while self.consume_results(timeout=0.1):
             # 3: just in case some arrive late in the pipe
@@ -116,6 +119,10 @@ class MasterParallelRunner(Runner):
         raise NotImplementedError
 
     def consume_results(self, timeout=1):
+        """Get item result in real-time using multiprocessing pipe
+        Required for formatters to work correctly
+        """
+
         try:
             job_id, result = self.resultsq.get(timeout=timeout)
         except queue.Empty:
@@ -183,6 +190,7 @@ class MasterParallelRunner(Runner):
 
 
 class FeatureParallelRunner(MasterParallelRunner):
+    """Run tests per feature"""
     def scan_features(self):
         for feature in self.features:
             self.jobs_map[id(feature)] = feature
@@ -198,6 +206,7 @@ class FeatureParallelRunner(MasterParallelRunner):
 
 
 class ScenarioParallelRunner(MasterParallelRunner):
+    """Run tests per scenario"""
     def scan_features(self):
         nfeat = nscens = 0
         def put(sth):
@@ -231,7 +240,7 @@ class ScenarioParallelRunner(MasterParallelRunner):
 
 
 class ProcessClientExecutor(Runner):
-    """Multiprocessing Client runner: picks "jobs" from parent queue
+    """Multiprocessing Client Executor: picks "job" from parent queue and runs it
         Each client is tagged with a `num` to appear in outputs etc.
     """
     def __init__(self, parent, num):
@@ -279,21 +288,102 @@ class ProcessClientExecutor(Runner):
                 try:
                     self.resultsq.put((job_id, job.send_status()))
                 except Exception as e:
-                    print("ERROR: cannot send result: {0}".format(e))
+                    print("ERROR: Cannot send result: {0}".format(e))
             else:
                 raise TypeError("Don't know how to process: %s" % type(job))
             self.jobsq.task_done()
 
-    def run_with_paths(self):
+    def update_executors_context(self, master_context: Context):
+        """Loads values from master context into the local context
+        
+        It's needed to have access to context objects, which were initialized in before_all()
+        In this case, each ProcessClientExecutor.context will have a reference to the same object
+        created in Master Process.
+        """
+        for k, v in master_context._root.items():
+            if k not in self.context._root and k not in ["stdout_capture", "stderr_capture"]:
+                try:
+                    setattr(self.context, k, v)
+                    self.context._origin[k] = master_context._origin[k]
+                except BaseException as e:
+                    print(f"ERROR: Failed to updated context with {k} --> {v}: ", e)
+
+    def run_executor(self, master_context: Context):
+        with self.path_manager:
+            self.setup_paths()
+            return self.run_with_paths(master_context)
+
+    def run_with_paths(self, master_context: Context):
         self.context = Context(self)
+        self.update_executors_context(master_context)
+
         self.load_hooks()
         self.load_step_definitions()
         assert not self.aborted
-
-        # TODO: Debugging
-        print("Context from ProcessExecutor: ", self.context.__dict__)
 
         failed = self.run_model(features=self.iter_queue())
         if failed:
             self.resultsq.put((None, 'set_fail'))
         self.resultsq.close()
+
+    def run_model(self, features=None):
+        # pylint: disable=too-many-branches
+        if not self.context:
+            self.context = Context(self)
+        if self.step_registry is None:
+            self.step_registry = the_step_registry
+        if features is None:
+            features = self.features
+
+        # -- ENSURE: context.execute_steps() works in weird cases (hooks, ...)
+        self.hook_failures = 0
+        self.setup_capture()
+        # self.run_hook("before_all", context)
+
+        run_feature = not self.aborted
+        failed_count = 0
+        undefined_steps_initial_size = len(self.undefined_steps)
+        for feature in features:
+            if run_feature:
+                try:
+                    self.feature = feature
+                    for formatter in self.formatters:
+                        formatter.uri(feature.filename)
+
+                    failed = feature.run(self)
+                    if failed:
+                        failed_count += 1
+                        if self.config.stop or self.aborted:
+                            # -- FAIL-EARLY: After first failure.
+                            run_feature = False
+                except KeyboardInterrupt:
+                    self.abort(reason="KeyboardInterrupt")
+                    failed_count += 1
+                    run_feature = False
+
+            # -- ALWAYS: Report run/not-run feature to reporters.
+            # REQUIRED-FOR: Summary to keep track of untested features.
+            for reporter in self.config.reporters:
+                reporter.feature(feature)
+
+        # -- AFTER-ALL:
+        # pylint: disable=protected-access, broad-except
+        # self.run_hook("after_all", self.context)
+        cleanups_failed = False
+        try:
+            self.context._do_cleanups()   # Without dropping the last context layer.
+        except Exception:
+            cleanups_failed = True
+
+        if self.aborted:
+            print("\nABORTED: By user.")
+        for formatter in self.formatters:
+            formatter.close()
+        for reporter in self.config.reporters:
+            reporter.end()
+
+        failed = ((failed_count > 0) or self.aborted or (self.hook_failures > 0)
+                  or (len(self.undefined_steps) > undefined_steps_initial_size)
+                  or cleanups_failed)
+                  # XXX-MAYBE: or context.failed)
+        return failed
