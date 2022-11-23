@@ -35,13 +35,19 @@ class MasterParallelRunner(Runner):
         self.results_fail = False
 
     def run_with_paths(self):
-        feature_locations = [filename for filename in self.feature_locations()
-                        if not self.config.exclude(filename)]
-        self.load_hooks()   # hooks themselves not used, but 'environment.py' loaded
+        feature_locations = [
+            filename for filename in self.feature_locations() if not self.config.exclude(filename)
+            ]
+
+        # hooks themselves not used, but 'environment.py' loaded
+        self.load_hooks()
         # step definitions are needed here for formatters only
         self.load_step_definitions()
+        # prepare list of features
         features = parse_features(feature_locations, language=self.config.lang)
         self.features.extend(features)
+
+        # get feature/scenario count for multiprocessing
         feature_count, scenario_count = self.scan_features()
         njobs = len(self.jobs_map)
         proc_count = int(self.config.proc_count)
@@ -49,19 +55,18 @@ class MasterParallelRunner(Runner):
                 " consideration by {2} workers. Some may be skipped if the"
                 " -t option was given..."
                .format(scenario_count, feature_count, proc_count))
-
         procs = []
-        old_outs = self.config.outputs
-        self.config.outputs = []
-        old_reporters = self.config.reporters
-        self.config.reporters = []
 
-        # init default context for Master process to execute before/after_all() hooks
+        # -- STEP: Prepare formatters to write messages to the default Stream (Master Process)
+        stream_openers = self.config.outputs
+        self.formatters = make_formatters(self.config, stream_openers)
+
+        # -- STEP: init default context for Master Process to execute before/after_all() hooks
         self.context = Context(self)
         self.setup_capture()
         self.run_hook("before_all", self.context)
 
-        # run each test as a separate Process
+        # -- STEP: Run each test as a separate Process
         for i in range(proc_count):
             client = ProcessClientExecutor(self, i)
             p = multiprocessing.Process(
@@ -74,11 +79,8 @@ class MasterParallelRunner(Runner):
 
         print("INFO: started {0} workers for {1} jobs.".format(proc_count, njobs))
 
-        self.config.reporters = old_reporters
-        self.formatters = make_formatters(self.config, old_outs)
-        self.config.outputs = old_outs
         while (not self.jobsq.empty()):
-            # 1: consume while tests are running
+            # 1: consume results while tests are running
             self.consume_results()
             if not any([p.is_alive() for p in procs]):
                 break
@@ -94,9 +96,9 @@ class MasterParallelRunner(Runner):
 
             # then, wait for all workers to exit:
             [p.join() for p in procs]
-
         print("INFO: all sub-processes have returned")
 
+        # -- STEP: Run after_all() hook
         self.run_hook("after_all", self.context)
 
         while self.consume_results(timeout=0.1):
@@ -104,10 +106,10 @@ class MasterParallelRunner(Runner):
             pass
 
         for f in self.features:
-            # make sure all features (including ones that have not returned)
-            # are printed
+            # make sure all features (including ones that have not returned) are printed
             self._output_feature(f)
 
+        # notify formatters and reporters that test run has finished
         for formatter in self.formatters:
             formatter.close()
         for reporter in self.config.reporters:
@@ -119,7 +121,8 @@ class MasterParallelRunner(Runner):
         raise NotImplementedError
 
     def consume_results(self, timeout=1):
-        """Get item result in real-time using multiprocessing pipe
+        """Get item result in real-time using multiprocessing pipe. 
+        
         Required for formatters to work correctly
         """
 
@@ -181,8 +184,7 @@ class MasterParallelRunner(Runner):
                         _out_scenario(scen, formatter)
                 else:
                     _out_scenario(scenario, formatter)
-
-
+            # notify formatter the end of current test
             formatter.eof()
 
         for reporter in self.config.reporters:
@@ -377,10 +379,6 @@ class ProcessClientExecutor(Runner):
 
         if self.aborted:
             print("\nABORTED: By user.")
-        for formatter in self.formatters:
-            formatter.close()
-        for reporter in self.config.reporters:
-            reporter.end()
 
         failed = ((failed_count > 0) or self.aborted or (self.hook_failures > 0)
                   or (len(self.undefined_steps) > undefined_steps_initial_size)
