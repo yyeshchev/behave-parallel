@@ -6,6 +6,7 @@ import sys
 import six
 from behave.version import VERSION as BEHAVE_VERSION
 from behave.configuration import Configuration
+from multiprocessing import cpu_count
 from behave.exception import ConstraintError, ConfigError, \
     FileNotFoundError, InvalidFileLocationError, InvalidFilenameError
 from behave.parser import ParserError
@@ -217,10 +218,12 @@ def main(args=None):
     config = Configuration(args)
 
     # override runner class if parallel option was provided
-    if getattr(config, 'proc_count'):
+    processes_count = getattr(config, 'proc_count')
+    if processes_count:
         try:
             from behave.runner_parallel import FeatureParallelRunner, ScenarioParallelRunner
             pelem = getattr(config, 'parallel_element', False)
+
             if not pelem:
                 print("INFO: Without giving --parallel-element, defaulting to 'scenario'...")
                 pelem = 'scenario'
