@@ -120,6 +120,11 @@ class MasterParallelRunner(Runner):
     def scan_features(self):
         raise NotImplementedError
 
+    def put_item_into_queue(self, item: Scenario | Feature):
+        item_id = id(item)
+        self.jobs_map[item_id] = item
+        self.jobsq.put(item_id)
+
     def consume_results(self, timeout=1):
         """Get item result in real-time using multiprocessing pipe. 
         
@@ -192,53 +197,51 @@ class MasterParallelRunner(Runner):
 
 
 class FeatureParallelRunner(MasterParallelRunner):
-    """Run tests per feature"""
+    """Adds features to job queue"""
     def scan_features(self):
         for feature in self.features:
-            self.jobs_map[id(feature)] = feature
-            self.jobsq.put(id(feature))
-            for scen in feature.scenarios:
-                scen.background_steps
-                if isinstance(scen, ScenarioOutline):
-                    # compute the sub-scenarios before serializing
-                    for subscen in scen.scenarios:
-                        subscen.background_steps
+            self.put_item_into_queue(feature)
+
+            # for scenario in feature.scenarios:
+            #     scenario.background_steps
+            #     if isinstance(scenario, ScenarioOutline):
+            #         # compute the sub-scenarios before serializing
+            #         for sub_scenario in scenario.scenarios:
+            #             sub_scenario.background_steps
 
         return len(self.jobs_map), 0
 
 
 class ScenarioParallelRunner(MasterParallelRunner):
-    """Run tests per scenario"""
+    """Adds each scenario/sub-scenario to job queue"""
     def scan_features(self):
-        nfeat = nscens = 0
-        def put(sth):
-            idf = id(sth)
-            self.jobs_map[idf] = sth
-            self.jobsq.put(idf)
+        n_features = n_scenarios = 0
 
         for feature in self.features:
             if 'serial' in feature.tags:
-                put(feature)
-                nfeat += 1
-                for scen in feature.scenarios:
-                    scen.background_steps
-                    if isinstance(scen, ScenarioOutline):
+                self.put_item_into_queue(feature)
+                n_features += 1
+
+                for scenario in feature.scenarios:
+                    scenario.background_steps
+                    if isinstance(scenario, ScenarioOutline):
                         # compute the sub-scenarios before serializing
-                        for subscen in scen.scenarios:
-                            subscen.background_steps
+                        for sub_scenario in scenario.scenarios:
+                            sub_scenario.background_steps
                 continue
             for scenario in feature.scenarios:
-                scenario.background_steps  # compute them, before sending out
+                # compute them, before sending out
+                scenario.background_steps
                 if scenario.type == 'scenario':
-                    put(scenario)
-                    nscens += 1
+                    self.put_item_into_queue(scenario)
+                    n_scenarios += 1
                 else:
-                    for subscenario in scenario.scenarios:
-                        subscenario.background_steps
-                        put(subscenario)
-                        nscens += 1
+                    for sub_scenario in scenario.scenarios:
+                        sub_scenario.background_steps
+                        self.put_item_into_queue(sub_scenario)
+                        n_scenarios += 1
 
-        return nfeat, nscens
+        return n_features, n_scenarios
 
 
 class ProcessClientExecutor(Runner):
@@ -260,7 +263,7 @@ class ProcessClientExecutor(Runner):
         """
         while True:
             try:
-                job_id = self.jobsq.get(timeout=0.5)
+                job_id = self.jobsq.get(timeout=1.0)
             except queue.Empty:
                 break
 
@@ -340,7 +343,6 @@ class ProcessClientExecutor(Runner):
         # -- ENSURE: context.execute_steps() works in weird cases (hooks, ...)
         self.hook_failures = 0
         self.setup_capture()
-        # self.run_hook("before_all", context)
 
         run_feature = not self.aborted
         failed_count = 0
@@ -368,12 +370,12 @@ class ProcessClientExecutor(Runner):
             for reporter in self.config.reporters:
                 reporter.feature(feature)
 
-        # -- AFTER-ALL:
+        # -- CLEAN-UP:
         # pylint: disable=protected-access, broad-except
-        # self.run_hook("after_all", self.context)
         cleanups_failed = False
         try:
-            self.context._do_cleanups()   # Without dropping the last context layer.
+            # Without dropping the last context layer
+            self.context._do_cleanups()
         except Exception:
             cleanups_failed = True
 
