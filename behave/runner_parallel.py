@@ -38,23 +38,24 @@ class MasterParallelRunner(Runner):
         feature_locations = [
             filename for filename in self.feature_locations() if not self.config.exclude(filename)
             ]
-
         # hooks themselves not used, but 'environment.py' loaded
         self.load_hooks()
         # step definitions are needed here for formatters only
         self.load_step_definitions()
-        # prepare list of features
+
+        # get list of all available features
         features = parse_features(feature_locations, language=self.config.lang)
-        self.features.extend(features)
+
+        # leave only features/scenarios which should be run
+        [self.features.append(feature) for feature in features if feature.should_run(self.config)]
 
         # get feature/scenario count for multiprocessing
         feature_count, scenario_count = self.scan_features()
         njobs = len(self.jobs_map)
         proc_count = int(self.config.proc_count)
 
-        print("INFO: {0} scenario(s) and {1} feature(s) queued for"
-                " consideration by {2} workers. Some may be skipped if the"
-                " -t option was given..."
+        print("\n\nINFO: {0} scenario(s) and {1} feature(s) queued for"
+                " consideration by {2} workers.\n\n"
                .format(scenario_count, feature_count, proc_count))
         processes = []
 
