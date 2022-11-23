@@ -182,7 +182,7 @@ class ScenarioContainer(TagAndStatusStatement, Replayable):
             run_item.reset()
 
     def send_status(self):
-        ret = super(Feature, self).send_status()
+        ret = super(ScenarioContainer, self).send_status()
         ret['hook_failed'] = self.hook_failed
         ret['scenarios'] = {}
         for scenario in self.scenarios:
@@ -190,7 +190,7 @@ class ScenarioContainer(TagAndStatusStatement, Replayable):
         return ret
 
     def recv_status(self, value):
-        super(Feature, self).recv_status(value)
+        super(ScenarioContainer, self).recv_status(value)
         if 'hook_failed' in value:
             self.hook_failed = value['hook_failed']
         if 'scenarios' in value:

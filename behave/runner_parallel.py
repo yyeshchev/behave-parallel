@@ -51,6 +51,12 @@ class MasterParallelRunner(Runner):
         feature_count, scenario_count = self.scan_features()
         njobs = len(self.jobs_map)
         proc_count = int(self.config.proc_count)
+        # TODO: Remove this, added for debug only
+        print("Debuging recursion error. Job map and features:")
+        print(self.jobs_map)
+        print(self.jobsq)
+        print(feature_count, scenario_count)
+
         print("INFO: {0} scenario(s) and {1} feature(s) queued for"
                 " consideration by {2} workers. Some may be skipped if the"
                 " -t option was given..."
@@ -198,9 +204,13 @@ class MasterParallelRunner(Runner):
 
 class FeatureParallelRunner(MasterParallelRunner):
     """Adds features to job queue"""
+
     def scan_features(self):
+        n_features = 0
+
         for feature in self.features:
             self.put_item_into_queue(feature)
+            n_features += 1
 
             # for scenario in feature.scenarios:
             #     scenario.background_steps
@@ -209,11 +219,12 @@ class FeatureParallelRunner(MasterParallelRunner):
             #         for sub_scenario in scenario.scenarios:
             #             sub_scenario.background_steps
 
-        return len(self.jobs_map), 0
+        return n_features, 0
 
 
 class ScenarioParallelRunner(MasterParallelRunner):
     """Adds each scenario/sub-scenario to job queue"""
+
     def scan_features(self):
         n_features = n_scenarios = 0
 
@@ -275,10 +286,6 @@ class ProcessClientExecutor(Runner):
 
             if isinstance(job, Feature):
                 yield job
-                try:
-                    self.resultsq.put((job_id, job.send_status()))
-                except Exception as e:
-                    print("ERROR: cannot send result: {0}".format(e))
             elif isinstance(job, Scenario):
                 # construct a dummy feature, having only this scenario
                 kwargs = {}
@@ -290,12 +297,14 @@ class ProcessClientExecutor(Runner):
                 feature = Feature(**kwargs)
                 feature.parser = orig_parser
                 yield feature
-                try:
-                    self.resultsq.put((job_id, job.send_status()))
-                except Exception as e:
-                    print("ERROR: Cannot send result: {0}".format(e))
             else:
                 raise TypeError("Don't know how to process: %s" % type(job))
+
+            try:
+                self.resultsq.put((job_id, job.send_status()))
+            except Exception as e:
+                print("ERROR: Cannot send result for {1}: {0}".format(e, job.name))
+
             self.jobsq.task_done()
 
     def update_executors_context(self, master_context: Context):
