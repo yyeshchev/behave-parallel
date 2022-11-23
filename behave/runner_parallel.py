@@ -51,17 +51,12 @@ class MasterParallelRunner(Runner):
         feature_count, scenario_count = self.scan_features()
         njobs = len(self.jobs_map)
         proc_count = int(self.config.proc_count)
-        # TODO: Remove this, added for debug only
-        print("Debuging recursion error. Job map and features:")
-        print(self.jobs_map)
-        print(self.jobsq)
-        print(feature_count, scenario_count)
 
         print("INFO: {0} scenario(s) and {1} feature(s) queued for"
                 " consideration by {2} workers. Some may be skipped if the"
                 " -t option was given..."
                .format(scenario_count, feature_count, proc_count))
-        procs = []
+        processes = []
 
         # -- STEP: Prepare formatters to write messages to the default Stream (Master Process)
         stream_openers = self.config.outputs
@@ -79,7 +74,7 @@ class MasterParallelRunner(Runner):
                 target=client.run_executor,
                 args=[self.context]
                 )
-            procs.append(p)
+            processes.append(p)
             p.start()
             del p
 
@@ -88,11 +83,11 @@ class MasterParallelRunner(Runner):
         while (not self.jobsq.empty()):
             # 1: consume results while tests are running
             self.consume_results()
-            if not any([p.is_alive() for p in procs]):
+            if not any([p.is_alive() for p in processes]):
                 break
 
         # wait for all jobs to be processed
-        if any([p.is_alive() for p in procs]):
+        if any([p.is_alive() for p in processes]):
             self.jobsq.join()
             print("INFO: all jobs have been processed")
 
@@ -101,7 +96,7 @@ class MasterParallelRunner(Runner):
                 pass
 
             # then, wait for all workers to exit:
-            [p.join() for p in procs]
+            [p.join() for p in processes]
         print("INFO: all sub-processes have returned")
 
         # -- STEP: Run after_all() hook
@@ -212,12 +207,12 @@ class FeatureParallelRunner(MasterParallelRunner):
             self.put_item_into_queue(feature)
             n_features += 1
 
-            # for scenario in feature.scenarios:
-            #     scenario.background_steps
-            #     if isinstance(scenario, ScenarioOutline):
-            #         # compute the sub-scenarios before serializing
-            #         for sub_scenario in scenario.scenarios:
-            #             sub_scenario.background_steps
+            # compute background steps for Scenarios and SubScenarios
+            for scenario in feature.scenarios:
+                scenario.background_steps
+                if isinstance(scenario, ScenarioOutline):
+                    for sub_scenario in scenario.scenarios:
+                        sub_scenario.background_steps
 
         return n_features, 0
 
@@ -229,19 +224,8 @@ class ScenarioParallelRunner(MasterParallelRunner):
         n_features = n_scenarios = 0
 
         for feature in self.features:
-            if 'serial' in feature.tags:
-                self.put_item_into_queue(feature)
-                n_features += 1
-
-                for scenario in feature.scenarios:
-                    scenario.background_steps
-                    if isinstance(scenario, ScenarioOutline):
-                        # compute the sub-scenarios before serializing
-                        for sub_scenario in scenario.scenarios:
-                            sub_scenario.background_steps
-                continue
+            # compute background steps for Scenarios and SubScenarios
             for scenario in feature.scenarios:
-                # compute them, before sending out
                 scenario.background_steps
                 if scenario.type == 'scenario':
                     self.put_item_into_queue(scenario)
