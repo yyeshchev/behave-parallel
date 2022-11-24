@@ -2,7 +2,13 @@
 """
 This module provides multiprocessing Runner class.
 
-Core functionality was taken from: https://github.com/xrg/behave-parallel/tree/eparallel
+Core functionality is based on https://github.com/xrg/behave-parallel/tree/eparallel
+
+Additional improvements: 
+ - before_all() and after_all() hooks are executed once instead of being run in parallel processes
+ - added handling for max number of processes
+ - fixed FeatureRunner to correctly call super class
+ - fixed Feature/Scenario calculation before kicking off parallel processes
 """
 
 import six
