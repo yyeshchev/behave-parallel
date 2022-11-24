@@ -6,6 +6,7 @@ import sys
 import six
 from behave.version import VERSION as BEHAVE_VERSION
 from behave.configuration import Configuration
+from multiprocessing import cpu_count
 from behave.exception import ConstraintError, ConfigError, \
     FileNotFoundError, InvalidFileLocationError, InvalidFilenameError
 from behave.parser import ParserError
@@ -215,6 +216,34 @@ def main(args=None):
     :return: 0, if successful. Non-zero, in case of errors/failures.
     """
     config = Configuration(args)
+
+    # override runner class if parallel option was provided
+    processes_count = getattr(config, 'proc_count')
+    if processes_count:
+        try:
+            from behave.runner_parallel import FeatureParallelRunner, ScenarioParallelRunner
+            pelem = getattr(config, 'parallel_element', False)
+
+            if not pelem:
+                print("INFO: Without giving --parallel-element, defaulting to 'scenario'...")
+                pelem = 'scenario'
+
+            if pelem == 'scenario':
+                config.runner_class = ScenarioParallelRunner
+            elif pelem == 'feature':
+                config.runner_class = FeatureParallelRunner
+            else:
+                print("ERROR: When using --processes, --parallel-element"
+                    " option must be set to 'feature' or 'scenario'. You gave "
+                    "'%s', which isn't valid." % pelem)
+                return 1
+
+        except ImportError as e:
+            print("DEBUG: import error: %s" % e)
+            print("ERROR: Cannot import multiprocessing module."
+                  "Cannot use parallel mode here.")
+            return 1
+
     return run_behave(config, runner_class=config.runner_class)
 
 

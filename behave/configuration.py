@@ -75,6 +75,21 @@ def valid_python_module(path):
     except (ValueError, AttributeError, ImportError):
         raise argparse.ArgumentTypeError("No module named '%s' was found." % path)
 
+def valid_processes_number(text):
+    """Converts string into a positive integer and validates number is <= max_cpu processes count"""
+    from multiprocessing import cpu_count
+
+    max_cpu_processes = cpu_count()
+    value = int(text)
+
+    if value < 0:
+        print("WARN: 'processes' must be a positive number. Provided: {0}. Defaulting to {1}".format(text, max_cpu_processes))
+        value = max_cpu_processes
+    if value > max_cpu_processes:
+        print("WARN: Provided value ({0}) exceed max_cpu number for your machine ({1}). Defaulting to {1}".format(value, max_cpu_processes))
+        value = max_cpu_processes
+    return value
+
 
 options = [
     (("-c", "--no-color"),
@@ -91,6 +106,19 @@ options = [
     (("-d", "--dry-run"),
      dict(action="store_true",
           help="Invokes formatters without executing the steps.")),
+
+    (('--processes',),
+     dict(metavar="NUMBER", dest='proc_count', type=valid_processes_number,
+          help="""Use multiple pids to do the work faster.
+		Not all options work properly under parallel mode. See README.md 
+		""")),
+
+    (('--parallel-element',),
+     dict(metavar="STRING", dest='parallel_element',
+          help="""If you used the --processes option, then this will control how the tests get parallelized.
+		Valid values are 'feature' or 'scenario'. Anything else will error. See readme for more
+		info on how this works.
+		""")),
 
     (("-D", "--define"),
      dict(dest="userdata_defines", type=parse_user_define, action="append",
